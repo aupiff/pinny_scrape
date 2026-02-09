@@ -1,0 +1,24 @@
+{
+  "name": "pinny_scrape",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "export": "ts-node src/full-export.ts",
+    "build": "tsc"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@types/node": "^25.0.10",
+    "axios": "^1.13.3",
+    "dotenv": "^17.2.3",
+    "playwright": "^1.58.0",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2"
+  }
+}
