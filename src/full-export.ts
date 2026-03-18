@@ -322,13 +322,13 @@ async function main() {
   let apiClient = createApiClient(authInfo);
 
   // Get total count
-  const countRes = await apiClient.get('/v1/people', {
+  const countRes = await withRetry(() => apiClient.get('/v1/people', {
     params: {
       'filter[client_relationships.provider]': authInfo.providerId,
       'page[number]': 1,
       'page[size]': 1,
     },
-  });
+  }));
   const totalClients = countRes.data.meta?.page?.total_count || 0;
   progress.totalClients = totalClients;
   console.log(`Total clients to export: ${totalClients.toLocaleString()}\n`);
