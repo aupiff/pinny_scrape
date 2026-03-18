@@ -84,18 +84,32 @@ export class UniteUsScraper {
     await this.page.fill('input[type="email"], input[name="user[email]"]', this.email);
     await this.page.click('button[type="submit"], input[type="submit"]');
 
-    // Step 2: Fill credentials on NYC.ID SAML login
-    await this.page.waitForURL('**nyc.gov**', { timeout: 15000 });
-    await this.page.waitForSelector('#gigya-loginID', { timeout: 15000 });
-    await this.page.fill('#gigya-loginID', this.email);
-    await this.page.fill('#gigya-password', this.password);
-    await this.page.click('input[type="submit"]');
+    // Step 2: Fill credentials on NYC.ID SAML login (may be skipped if session is cached)
+    const afterEmail = await Promise.race([
+      this.page.waitForURL('**nyc.gov**', { timeout: 30000 }).then(() => 'nyc' as const),
+      this.page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 30000 }).then(() => 'phs' as const),
+      this.page.waitForURL('**/dashboard/**', { timeout: 30000 }).then(() => 'dashboard' as const),
+    ]);
 
-    // Step 3: Select PHS group
-    await this.page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 30000 });
-    await this.page.click('text=Stand Out Care Corp - SCN - PHS');
+    if (afterEmail === 'nyc') {
+      await this.page.waitForSelector('#gigya-loginID', { timeout: 15000 });
+      await this.page.fill('#gigya-loginID', this.email);
+      await this.page.fill('#gigya-password', this.password);
+      await this.page.click('input[type="submit"]');
 
-    await this.page.waitForURL('**/dashboard/**', { timeout: 60000 });
+      const afterNyc = await Promise.race([
+        this.page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 30000 }).then(() => 'phs' as const),
+        this.page.waitForURL('**/dashboard/**', { timeout: 30000 }).then(() => 'dashboard' as const),
+      ]);
+
+      if (afterNyc === 'phs') {
+        await this.page.click('text=Stand Out Care Corp - SCN - PHS');
+        await this.page.waitForURL('**/dashboard/**', { timeout: 60000 });
+      }
+    } else if (afterEmail === 'phs') {
+      await this.page.click('text=Stand Out Care Corp - SCN - PHS');
+      await this.page.waitForURL('**/dashboard/**', { timeout: 60000 });
+    }
     await this.page.waitForTimeout(2000);
 
     await this.page.goto('https://app.uniteus.io/dashboard/clients/all', { waitUntil: 'domcontentloaded' });

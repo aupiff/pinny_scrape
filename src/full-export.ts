@@ -78,18 +78,34 @@ async function authenticate(email: string, password: string): Promise<{ authInfo
   await page.fill('input[type="email"], input[name="user[email]"]', email);
   await page.click('button[type="submit"], input[type="submit"]');
 
-  // Step 2: Fill credentials on NYC.ID SAML login
-  await page.waitForURL('**nyc.gov**', { timeout: 15000 });
-  await page.waitForSelector('#gigya-loginID', { timeout: 15000 });
-  await page.fill('#gigya-loginID', email);
-  await page.fill('#gigya-password', password);
-  await page.click('input[type="submit"]');
+  // Step 2: Fill credentials on NYC.ID SAML login (may be skipped if session is cached)
+  const afterEmail = await Promise.race([
+    page.waitForURL('**nyc.gov**', { timeout: 30000 }).then(() => 'nyc' as const),
+    page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 30000 }).then(() => 'phs' as const),
+    page.waitForURL('**/dashboard/**', { timeout: 30000 }).then(() => 'dashboard' as const),
+  ]);
 
-  // Step 3: Select PHS group
-  await page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 30000 });
-  await page.click('text=Stand Out Care Corp - SCN - PHS');
+  if (afterEmail === 'nyc') {
+    await page.waitForSelector('#gigya-loginID', { timeout: 15000 });
+    await page.fill('#gigya-loginID', email);
+    await page.fill('#gigya-password', password);
+    await page.click('input[type="submit"]');
 
-  await page.waitForURL('**/dashboard/**', { timeout: 60000 });
+    // After NYC.ID login, may see PHS selection or go straight to dashboard
+    const afterNyc = await Promise.race([
+      page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 30000 }).then(() => 'phs' as const),
+      page.waitForURL('**/dashboard/**', { timeout: 30000 }).then(() => 'dashboard' as const),
+    ]);
+
+    if (afterNyc === 'phs') {
+      await page.click('text=Stand Out Care Corp - SCN - PHS');
+      await page.waitForURL('**/dashboard/**', { timeout: 60000 });
+    }
+  } else if (afterEmail === 'phs') {
+    await page.click('text=Stand Out Care Corp - SCN - PHS');
+    await page.waitForURL('**/dashboard/**', { timeout: 60000 });
+  }
+  // If 'dashboard', we're already there
   await page.waitForTimeout(2000);
   await page.goto('https://app.uniteus.io/dashboard/clients/all', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(5000);
