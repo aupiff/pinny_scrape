@@ -72,12 +72,23 @@ async function authenticate(email: string, password: string): Promise<{ authInfo
 
   console.log('Authenticating...');
   await page.goto('https://app.auth.uniteus.io/');
+
+  // Step 1: Enter email on Unite Us
   await page.waitForSelector('input[type="email"], input[name="user[email]"]', { timeout: 15000 });
   await page.fill('input[type="email"], input[name="user[email]"]', email);
   await page.click('button[type="submit"], input[type="submit"]');
-  await page.waitForSelector('input[type="password"]', { timeout: 15000 });
-  await page.fill('input[type="password"]', password);
-  await page.click('button[type="submit"], input[type="submit"]');
+
+  // Step 2: Fill credentials on NYC.ID SAML login
+  await page.waitForURL('**nyc.gov**', { timeout: 15000 });
+  await page.waitForSelector('#gigya-loginID', { timeout: 15000 });
+  await page.fill('#gigya-loginID', email);
+  await page.fill('#gigya-password', password);
+  await page.click('input[type="submit"]');
+
+  // Step 3: Select PHS group
+  await page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 30000 });
+  await page.click('text=Stand Out Care Corp - SCN - PHS');
+
   await page.waitForURL('**/dashboard/**', { timeout: 60000 });
   await page.waitForTimeout(2000);
   await page.goto('https://app.uniteus.io/dashboard/clients/all', { waitUntil: 'domcontentloaded' });

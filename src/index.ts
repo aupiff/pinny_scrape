@@ -79,13 +79,21 @@ export class UniteUsScraper {
     console.log('Logging in...');
     await this.page.goto('https://app.auth.uniteus.io/');
 
+    // Step 1: Enter email on Unite Us
     await this.page.waitForSelector('input[type="email"], input[name="user[email]"]', { timeout: 15000 });
     await this.page.fill('input[type="email"], input[name="user[email]"]', this.email);
     await this.page.click('button[type="submit"], input[type="submit"]');
 
-    await this.page.waitForSelector('input[type="password"]', { timeout: 15000 });
-    await this.page.fill('input[type="password"]', this.password);
-    await this.page.click('button[type="submit"], input[type="submit"]');
+    // Step 2: Fill credentials on NYC.ID SAML login
+    await this.page.waitForURL('**nyc.gov**', { timeout: 15000 });
+    await this.page.waitForSelector('#gigya-loginID', { timeout: 15000 });
+    await this.page.fill('#gigya-loginID', this.email);
+    await this.page.fill('#gigya-password', this.password);
+    await this.page.click('input[type="submit"]');
+
+    // Step 3: Select PHS group
+    await this.page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 30000 });
+    await this.page.click('text=Stand Out Care Corp - SCN - PHS');
 
     await this.page.waitForURL('**/dashboard/**', { timeout: 60000 });
     await this.page.waitForTimeout(2000);
