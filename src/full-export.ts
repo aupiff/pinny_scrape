@@ -80,9 +80,9 @@ async function authenticate(email: string, password: string): Promise<{ authInfo
 
   // Step 2: Fill credentials on NYC.ID SAML login (may be skipped if session is cached)
   const afterEmail = await Promise.race([
-    page.waitForURL('**nyc.gov**', { timeout: 30000 }).then(() => 'nyc' as const),
-    page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 30000 }).then(() => 'phs' as const),
-    page.waitForURL('**/dashboard/**', { timeout: 30000 }).then(() => 'dashboard' as const),
+    page.waitForURL('**nyc.gov**', { timeout: 60000 }).then(() => 'nyc' as const),
+    page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 60000 }).then(() => 'phs' as const),
+    page.waitForURL('**app.uniteus.io**', { timeout: 60000 }).then(() => 'uniteus' as const),
   ]);
 
   if (afterEmail === 'nyc') {
@@ -91,21 +91,21 @@ async function authenticate(email: string, password: string): Promise<{ authInfo
     await page.fill('#gigya-password', password);
     await page.click('input[type="submit"]');
 
-    // After NYC.ID login, may see PHS selection or go straight to dashboard
+    // After NYC.ID login, wait to land back on Unite Us
     const afterNyc = await Promise.race([
-      page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 30000 }).then(() => 'phs' as const),
-      page.waitForURL('**/dashboard/**', { timeout: 30000 }).then(() => 'dashboard' as const),
+      page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 60000 }).then(() => 'phs' as const),
+      page.waitForURL('**app.uniteus.io/dashboard**', { timeout: 60000 }).then(() => 'dashboard' as const),
     ]);
 
     if (afterNyc === 'phs') {
       await page.click('text=Stand Out Care Corp - SCN - PHS');
-      await page.waitForURL('**/dashboard/**', { timeout: 60000 });
     }
   } else if (afterEmail === 'phs') {
     await page.click('text=Stand Out Care Corp - SCN - PHS');
-    await page.waitForURL('**/dashboard/**', { timeout: 60000 });
   }
-  // If 'dashboard', we're already there
+
+  // Ensure we reach the dashboard
+  await page.waitForURL('**app.uniteus.io/dashboard**', { timeout: 60000 });
   await page.waitForTimeout(2000);
   await page.goto('https://app.uniteus.io/dashboard/clients/all', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(5000);

@@ -47,9 +47,9 @@ async function discoverApi() {
 
   // Step 2: Fill credentials on NYC.ID SAML login (may be skipped if session is cached)
   const afterEmail = await Promise.race([
-    page.waitForURL('**nyc.gov**', { timeout: 30000 }).then(() => 'nyc' as const),
-    page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 30000 }).then(() => 'phs' as const),
-    page.waitForURL('**/dashboard/**', { timeout: 30000 }).then(() => 'dashboard' as const),
+    page.waitForURL('**nyc.gov**', { timeout: 60000 }).then(() => 'nyc' as const),
+    page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 60000 }).then(() => 'phs' as const),
+    page.waitForURL('**app.uniteus.io**', { timeout: 60000 }).then(() => 'uniteus' as const),
   ]);
 
   if (afterEmail === 'nyc') {
@@ -59,18 +59,19 @@ async function discoverApi() {
     await page.click('input[type="submit"]');
 
     const afterNyc = await Promise.race([
-      page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 30000 }).then(() => 'phs' as const),
-      page.waitForURL('**/dashboard/**', { timeout: 30000 }).then(() => 'dashboard' as const),
+      page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 60000 }).then(() => 'phs' as const),
+      page.waitForURL('**app.uniteus.io/dashboard**', { timeout: 60000 }).then(() => 'dashboard' as const),
     ]);
 
     if (afterNyc === 'phs') {
       await page.click('text=Stand Out Care Corp - SCN - PHS');
-      await page.waitForURL('**/dashboard/**', { timeout: 60000 });
     }
   } else if (afterEmail === 'phs') {
     await page.click('text=Stand Out Care Corp - SCN - PHS');
-    await page.waitForURL('**/dashboard/**', { timeout: 60000 });
   }
+
+  // Ensure we reach the dashboard
+  await page.waitForURL('**app.uniteus.io/dashboard**', { timeout: 60000 });
   console.log('\nLogged in, navigating to clients list...\n');
 
   // Navigate to clients list and observe API calls
