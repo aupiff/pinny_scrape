@@ -4,8 +4,8 @@ import axios, { AxiosInstance } from 'axios';
 import * as fs from 'fs';
 
 const API_BASE_URL = 'https://core.uniteus.io';
-const PROGRESS_FILE = 'export_progress_v3.json';
-const OUTPUT_FILE = 'clients_export_2026-03-23_za.csv';
+const PROGRESS_FILE = 'export_progress_v2.json';
+const OUTPUT_FILE = 'clients_export_2026-03-23.csv';
 const CONCURRENCY = 30;
 const PAGE_SIZE = 100;
 
@@ -358,7 +358,7 @@ async function main() {
           apiClient.get('/v1/people', {
             params: {
               'filter[client_relationships.provider]': authInfo.providerId,
-              'sort': '-last_name,-first_name',
+              'sort': 'last_name,first_name',
               'page[number]': page,
               'simple_paging': 'true',
               'timeout_with_fallback': 'true',
