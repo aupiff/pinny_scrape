@@ -1,12 +1,11 @@
 import 'dotenv/config';
-import { chromium, Browser, BrowserContext, Page } from 'playwright';
+import { chromium } from 'playwright';
 import axios, { AxiosInstance } from 'axios';
 import * as fs from 'fs';
 
 const API_BASE_URL = 'https://core.uniteus.io';
-const PROGRESS_FILE = 'export_progress.json';
-const OUTPUT_FILE = 'clients_full_export.csv';
-const BATCH_SIZE = 100; // Clients per batch before saving progress
+const PROGRESS_FILE = 'export_progress_v2.json';
+const OUTPUT_FILE = 'clients_export_2026-03-23.csv';
 const CONCURRENCY = 30;
 const PAGE_SIZE = 100;
 
@@ -20,7 +19,7 @@ interface AuthInfo {
 interface Progress {
   completedIds: string[];
   lastPage: number;
-  totalClients: number;
+  hasNextPage: boolean;
   startedAt: string;
   lastUpdated: string;
 }
@@ -34,7 +33,6 @@ interface ApiData {
 
 let shuttingDown = false;
 
-// Handle Ctrl+C gracefully
 process.on('SIGINT', () => {
   console.log('\n\nReceived SIGINT. Finishing current batch and saving progress...');
   shuttingDown = true;
@@ -63,20 +61,20 @@ async function authenticate(email: string, password: string): Promise<{ authInfo
   });
 
   page.on('request', (request) => {
-    const empId = request.headers()['x-employee-id'];
-    if (empId) employeeId = empId;
+    const headers = request.headers();
+    if (headers['x-employee-id'] && !employeeId) employeeId = headers['x-employee-id'];
     const url = request.url();
     const providerMatch = url.match(/filter%5Bclient_relationships\.provider%5D=([a-f0-9-]+)/);
-    if (providerMatch) providerId = providerMatch[1];
+    if (providerMatch && !providerId) providerId = providerMatch[1];
   });
 
   console.log('Authenticating...');
   await page.goto('https://app.auth.uniteus.io/');
 
   // Step 1: Enter email on Unite Us
-  await page.waitForSelector('input[type="email"], input[name="user[email]"]', { timeout: 15000 });
-  await page.fill('input[type="email"], input[name="user[email]"]', email);
-  await page.click('button[type="submit"], input[type="submit"]');
+  await page.waitForSelector('input[name="user[email]"]', { timeout: 15000 });
+  await page.fill('input[name="user[email]"]', email);
+  await page.click('input[type="submit"]');
 
   // Step 2: Fill credentials on NYC.ID SAML login (may be skipped if session is cached)
   const afterEmail = await Promise.race([
@@ -86,15 +84,16 @@ async function authenticate(email: string, password: string): Promise<{ authInfo
   ]);
 
   if (afterEmail === 'nyc') {
-    await page.waitForSelector('#gigya-loginID', { timeout: 15000 });
+    await page.waitForSelector('#gigya-loginID', { timeout: 30000, state: 'visible' });
     await page.fill('#gigya-loginID', email);
     await page.fill('#gigya-password', password);
-    await page.click('input[type="submit"]');
+    const submitBtns = await page.$$('input[type="submit"]');
+    if (submitBtns.length > 0) await submitBtns[0].click();
 
     // After NYC.ID login, wait to land back on Unite Us
     const afterNyc = await Promise.race([
       page.waitForSelector('text=Stand Out Care Corp - SCN - PHS', { timeout: 60000 }).then(() => 'phs' as const),
-      page.waitForURL('**app.uniteus.io/dashboard**', { timeout: 60000 }).then(() => 'dashboard' as const),
+      page.waitForURL('**app.uniteus.io**', { timeout: 60000 }).then(() => 'uniteus' as const),
     ]);
 
     if (afterNyc === 'phs') {
@@ -104,19 +103,31 @@ async function authenticate(email: string, password: string): Promise<{ authInfo
     await page.click('text=Stand Out Care Corp - SCN - PHS');
   }
 
-  // Ensure we reach the dashboard
-  await page.waitForURL('**app.uniteus.io/dashboard**', { timeout: 60000 });
-  await page.waitForTimeout(2000);
+  // Wait for app to load (no longer requires /dashboard in URL)
+  await page.waitForURL('**app.uniteus.io**', { timeout: 60000 });
+  await page.waitForTimeout(8000);
+
+  // Click PHS org selector if it appears after initial load
+  const phsText = await page.$('text=Stand Out Care Corp - SCN - PHS');
+  if (phsText) {
+    await page.click('text=Stand Out Care Corp - SCN - PHS');
+    await page.waitForTimeout(5000);
+  }
+
+  // Navigate to clients list to trigger API calls that capture employeeId/providerId
   await page.goto('https://app.uniteus.io/dashboard/clients/all', { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(10000);
 
   if (!authToken) throw new Error('Failed to capture auth token');
+  if (!employeeId) throw new Error('Failed to capture employee ID');
   if (!providerId) providerId = 'e15af87f-3d21-4cbb-b5b0-c3c637a5dd8e';
 
   // Token expires in 15 minutes, set expiry 12 minutes from now to be safe
   const expiresAt = Date.now() + 12 * 60 * 1000;
 
   console.log('Authentication successful!');
+  console.log(`  employeeId: ${employeeId}`);
+  console.log(`  providerId: ${providerId}`);
 
   return {
     authInfo: { token: authToken, employeeId, providerId, expiresAt },
@@ -127,8 +138,8 @@ async function authenticate(email: string, password: string): Promise<{ authInfo
 function createApiClient(authInfo: AuthInfo): AxiosInstance {
   return axios.create({
     baseURL: API_BASE_URL,
+    timeout: 60000,
     headers: {
-      'Content-Type': 'application/json',
       'Accept': 'application/json',
       'Authorization': `Bearer ${authInfo.token}`,
       'x-employee-id': authInfo.employeeId,
@@ -141,11 +152,9 @@ function isRetryableError(error: unknown): boolean {
   if (axios.isAxiosError(error)) {
     const status = error.response?.status;
     if (status && [429, 500, 502, 503, 504].includes(status)) return true;
-    // Network errors
     const code = error.code;
-    if (code && ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(code)) return true;
+    if (code && ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNABORTED'].includes(code)) return true;
   }
-  // Generic network errors
   if (error instanceof Error) {
     const msg = error.message.toLowerCase();
     if (msg.includes('timeout') || msg.includes('network') || msg.includes('socket')) return true;
@@ -159,7 +168,7 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 6, baseDelayMs = 
       return await fn();
     } catch (error) {
       if (isRetryableError(error) && attempt < maxRetries) {
-        const delay = baseDelayMs * Math.pow(2, attempt - 1); // Exponential backoff: 2s, 4s, 8s, 16s, 32s
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
         const status = axios.isAxiosError(error) ? error.response?.status || error.code : 'error';
         console.log(`  Retry ${attempt}/${maxRetries} after ${status}, waiting ${delay / 1000}s...`);
         await sleep(delay);
@@ -308,7 +317,7 @@ async function main() {
     progress = {
       completedIds: [],
       lastPage: 0,
-      totalClients: 0,
+      hasNextPage: true,
       startedAt: new Date().toISOString(),
       lastUpdated: new Date().toISOString(),
     };
@@ -321,25 +330,12 @@ async function main() {
   let { authInfo, close } = await authenticate(email, password);
   let apiClient = createApiClient(authInfo);
 
-  // Get total count
-  const countRes = await withRetry(() => apiClient.get('/v1/people', {
-    params: {
-      'filter[client_relationships.provider]': authInfo.providerId,
-      'page[number]': 1,
-      'page[size]': 1,
-    },
-  }));
-  const totalClients = countRes.data.meta?.page?.total_count || 0;
-  progress.totalClients = totalClients;
-  console.log(`Total clients to export: ${totalClients.toLocaleString()}\n`);
-
-  const totalPages = Math.ceil(totalClients / PAGE_SIZE);
   const startPage = progress.lastPage + 1;
-
   const startTime = Date.now();
   let processedThisSession = 0;
+  let hasNextPage = progress.hasNextPage;
 
-  for (let page = startPage; page <= totalPages && !shuttingDown; page++) {
+  for (let page = startPage; hasNextPage && !shuttingDown; page++) {
     // Check if we need to re-authenticate
     if (Date.now() > authInfo.expiresAt) {
       console.log('\nToken expiring, re-authenticating...');
@@ -350,10 +346,12 @@ async function main() {
       apiClient = createApiClient(authInfo);
     }
 
-    // Fetch page of client IDs with extended retry for page-level failures
+    // Fetch page of client IDs using simple_paging (new API format)
     let clientIds: string[];
+    let pageHasNext = false;
     let pageRetries = 0;
     const maxPageRetries = 3;
+
     while (true) {
       try {
         const listRes = await withRetry(() =>
@@ -362,25 +360,27 @@ async function main() {
               'filter[client_relationships.provider]': authInfo.providerId,
               'sort': 'last_name,first_name',
               'page[number]': page,
-              'page[size]': PAGE_SIZE,
+              'simple_paging': 'true',
+              'timeout_with_fallback': 'true',
             },
           })
         );
         const clientList = Array.isArray(listRes.data.data) ? listRes.data.data : [listRes.data.data];
         clientIds = clientList.map((c: ApiData) => c.id).filter((id: string) => !completedSet.has(id));
-        break; // Success, exit retry loop
+        pageHasNext = listRes.data.meta?.page?.has_next_page === true;
+        break;
       } catch (error) {
         pageRetries++;
         if (pageRetries >= maxPageRetries) {
           console.error(`Error fetching page ${page} after ${maxPageRetries} attempts, skipping...`);
           clientIds = [];
+          pageHasNext = true; // Assume there are more pages
           break;
         }
-        const waitTime = 30000 * pageRetries; // 30s, 60s, 90s
+        const waitTime = 30000 * pageRetries;
         console.log(`Page ${page} failed, waiting ${waitTime / 1000}s before retry ${pageRetries}/${maxPageRetries}...`);
         await sleep(waitTime);
 
-        // Re-authenticate in case token expired
         if (Date.now() > authInfo.expiresAt - 60000) {
           console.log('Re-authenticating before retry...');
           await close();
@@ -392,8 +392,12 @@ async function main() {
       }
     }
 
+    hasNextPage = pageHasNext;
+
     if (clientIds.length === 0) {
       progress.lastPage = page;
+      progress.hasNextPage = hasNextPage;
+      saveProgress(progress);
       continue;
     }
 
@@ -420,7 +424,7 @@ async function main() {
           return { clientId, data: flattenClient(person, addresses, insurances, languages) };
         } catch (error) {
           if (axios.isAxiosError(error) && error.response?.status === 401) {
-            throw error; // Propagate auth errors
+            throw error;
           }
           return null;
         }
@@ -434,7 +438,6 @@ async function main() {
           progress.completedIds.push(result.clientId);
         }
       }
-      // No delay - only sleep on rate limit (handled by withRetry)
     }
 
     // Save batch to CSV
@@ -444,19 +447,18 @@ async function main() {
     }
 
     progress.lastPage = page;
+    progress.hasNextPage = hasNextPage;
     saveProgress(progress);
 
     // Progress report
     const elapsed = (Date.now() - startTime) / 1000;
     const rate = processedThisSession / elapsed;
-    const remaining = totalClients - progress.completedIds.length;
-    const etaHours = remaining / rate / 3600;
 
     console.log(
-      `Page ${page}/${totalPages} | ` +
-      `${progress.completedIds.length.toLocaleString()}/${totalClients.toLocaleString()} clients | ` +
+      `Page ${page} | ` +
+      `${progress.completedIds.length.toLocaleString()} clients exported | ` +
       `${rate.toFixed(1)}/sec | ` +
-      `ETA: ${etaHours.toFixed(1)}h`
+      `hasNextPage: ${hasNextPage}`
     );
   }
 
@@ -465,12 +467,11 @@ async function main() {
   if (shuttingDown) {
     console.log('\n=== PAUSED ===');
     console.log(`Progress saved. Run again to resume.`);
-    console.log(`Completed: ${progress.completedIds.length.toLocaleString()} / ${totalClients.toLocaleString()}`);
+    console.log(`Completed: ${progress.completedIds.length.toLocaleString()}`);
   } else {
     console.log('\n=== EXPORT COMPLETE ===');
     console.log(`Total clients: ${progress.completedIds.length.toLocaleString()}`);
     console.log(`Output file: ${OUTPUT_FILE}`);
-    // Clean up progress file on completion
     if (fs.existsSync(PROGRESS_FILE)) {
       fs.unlinkSync(PROGRESS_FILE);
     }
@@ -484,14 +485,14 @@ async function runWithAutoRestart() {
   while (restarts < maxRestarts && !shuttingDown) {
     try {
       await main();
-      break; // Completed successfully or user stopped
+      break;
     } catch (error) {
       restarts++;
       console.error(`\n=== PROCESS CRASHED (attempt ${restarts}/${maxRestarts}) ===`);
       console.error(error);
 
       if (restarts < maxRestarts && !shuttingDown) {
-        const waitTime = 60000 * restarts; // 1min, 2min, 3min...
+        const waitTime = 60000 * restarts;
         console.log(`Restarting in ${waitTime / 1000} seconds...\n`);
         await sleep(waitTime);
       }
