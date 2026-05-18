@@ -4,8 +4,8 @@ import axios, { AxiosInstance } from 'axios';
 import * as fs from 'fs';
 
 const API_BASE_URL = 'https://core.uniteus.io';
-const PROGRESS_FILE = 'export_progress_v2.json';
-const OUTPUT_FILE = 'clients_export_2026-03-23.csv';
+const PROGRESS_FILE = 'export_progress_v3.json';
+const OUTPUT_FILE = 'clients_export_2026-05-18.csv';
 const CONCURRENCY = 30;
 const PAGE_SIZE = 100;
 
@@ -209,8 +209,22 @@ function flattenClient(
       const primary = value.find((p: any) => p.is_primary) || value[0];
       flat['phone'] = primary?.phone_number || '';
       flat['phone_type'] = primary?.phone_type || '';
+      flat['all_phones'] = value
+        .map((p: any) => {
+          const num = p?.phone_number || '';
+          if (!num) return '';
+          const type = p?.phone_type || '';
+          return type ? `${type}:${num}` : num;
+        })
+        .filter(Boolean)
+        .join('; ');
     } else if (key === 'email_addresses' && Array.isArray(value) && value.length > 0) {
-      flat['email'] = (value[0] as any)?.email || '';
+      const primaryEmail = value.find((e: any) => e.is_primary) || value[0];
+      flat['email'] = primaryEmail?.email || '';
+      flat['all_emails'] = value
+        .map((e: any) => e?.email || '')
+        .filter(Boolean)
+        .join('; ');
     } else if (Array.isArray(value)) {
       flat[key] = value.length > 0 ? JSON.stringify(value) : '';
     } else if (typeof value === 'object') {
@@ -266,7 +280,7 @@ function getHeaders(): string[] {
   return [
     'id', 'first_name', 'last_name', 'middle_name', 'date_of_birth',
     'gender', 'race', 'ethnicity', 'spoken_languages', 'written_languages',
-    'phone', 'phone_type', 'email',
+    'phone', 'phone_type', 'all_phones', 'email', 'all_emails',
     'address_line_1', 'address_line_2', 'address_city', 'address_state',
     'address_postal_code', 'address_county', 'address_type',
     'insurance_member_id', 'insurance_group_id', 'insurance_status',
