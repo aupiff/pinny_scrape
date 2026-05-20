@@ -7,7 +7,7 @@ const API_BASE_URL = 'https://core.uniteus.io';
 const PROGRESS_FILE = 'export_progress_v3.json';
 const OUTPUT_FILE = 'clients_export_2026-05-18.csv';
 const CONCURRENCY = 30;
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 200;
 
 interface AuthInfo {
   token: string;
@@ -22,6 +22,7 @@ interface Progress {
   hasNextPage: boolean;
   startedAt: string;
   lastUpdated: string;
+  pageSize?: number;
 }
 
 interface ApiData {
@@ -182,14 +183,23 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 6, baseDelayMs = 
 
 function loadProgress(): Progress | null {
   if (fs.existsSync(PROGRESS_FILE)) {
-    const data = JSON.parse(fs.readFileSync(PROGRESS_FILE, 'utf-8'));
-    return data as Progress;
+    const data = JSON.parse(fs.readFileSync(PROGRESS_FILE, 'utf-8')) as Progress;
+    if (data.pageSize !== PAGE_SIZE) {
+      console.log(
+        `Page size changed (was ${data.pageSize ?? 'unset'}, now ${PAGE_SIZE}) — resetting pagination cursor, keeping ${data.completedIds.length.toLocaleString()} completed IDs for dedup.`
+      );
+      data.lastPage = 0;
+      data.hasNextPage = true;
+      data.pageSize = PAGE_SIZE;
+    }
+    return data;
   }
   return null;
 }
 
 function saveProgress(progress: Progress): void {
   progress.lastUpdated = new Date().toISOString();
+  progress.pageSize = PAGE_SIZE;
   fs.writeFileSync(PROGRESS_FILE, JSON.stringify(progress, null, 2));
 }
 
@@ -334,6 +344,7 @@ async function main() {
       hasNextPage: true,
       startedAt: new Date().toISOString(),
       lastUpdated: new Date().toISOString(),
+      pageSize: PAGE_SIZE,
     };
     console.log('\nStarting fresh export...\n');
   }
@@ -374,6 +385,7 @@ async function main() {
               'filter[client_relationships.provider]': authInfo.providerId,
               'sort': 'last_name,first_name',
               'page[number]': page,
+              'page[size]': PAGE_SIZE,
               'simple_paging': 'true',
               'timeout_with_fallback': 'true',
             },
@@ -385,6 +397,14 @@ async function main() {
         break;
       } catch (error) {
         pageRetries++;
+        if (axios.isAxiosError(error)) {
+          const status = error.response?.status;
+          const body = error.response?.data;
+          const bodyStr = typeof body === 'string' ? body.slice(0, 500) : JSON.stringify(body).slice(0, 500);
+          console.log(`  Page ${page} error: status=${status} code=${error.code} body=${bodyStr}`);
+        } else {
+          console.log(`  Page ${page} error: ${(error as Error)?.message}`);
+        }
         if (pageRetries >= maxPageRetries) {
           console.error(`Error fetching page ${page} after ${maxPageRetries} attempts, skipping...`);
           clientIds = [];
